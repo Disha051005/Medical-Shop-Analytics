@@ -3,43 +3,36 @@ import pandas as pd
 import sqlite3
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="Medical Shop Analytics", layout="wide")
+st.set_page_config(page_title="Medical Analytics", layout="wide")
 
-# ------------------ BEAUTIFUL STYLE ------------------
+# ---------------- STYLE ----------------
 st.markdown("""
 <style>
-
-.stApp{
-background: linear-gradient(to right,#e3f2fd,#ffffff);
+.stApp {
+    background: linear-gradient(to right,#e3f2fd,#ffffff);
 }
-
-h1{
-text-align:center;
-color:#d32f2f;
+h1 {
+    color:#d32f2f;
+    text-align:center;
 }
-
-.sidebar .sidebar-content{
-background-color:#f5f5f5;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
 st.title("💊 Medical Shop Sales & Expiry Risk Analytics")
 
-# ------------------ DATABASE ------------------
+# ---------------- DATABASE ----------------
 conn = sqlite3.connect("medical.db")
 df = pd.read_sql("SELECT * FROM sales", conn)
 
+# ---------------- PREPROCESS ----------------
 df["Expiry_Date"] = pd.to_datetime(df["Expiry_Date"])
-
 today = pd.Timestamp.today()
 
 df["Days_Left"] = (df["Expiry_Date"] - today).dt.days
 
 def expiry_risk(days):
-
     if days < 30:
         return "High Risk"
     elif days < 90:
@@ -50,139 +43,137 @@ def expiry_risk(days):
 df["Expiry_Risk"] = df["Days_Left"].apply(expiry_risk)
 
 df["Unsold"] = df["Quantity"] - df["Sold"]
-
 df["Potential_Loss"] = df["Unsold"] * df["Price"]
 
-# ------------------ SIDEBAR ------------------
+# ⭐ BEST RESTOCK LOGIC (PERCENTAGE BASED)
+df["Stock_Percentage"] = (df["Unsold"] / df["Quantity"]) * 100
+
+# ---------------- SIDEBAR ----------------
 menu = st.sidebar.selectbox(
-"Navigation",
-["Dashboard","Sales Analysis","Expiry Analysis","Search Medicine","Database"]
+    "Navigation",
+    ["Dashboard","Sales Analysis","Expiry Analysis",
+     "Prediction","Recommendations","Database"]
 )
 
-# ------------------ DASHBOARD ------------------
+# ---------------- DASHBOARD ----------------
 if menu == "Dashboard":
 
-    st.subheader("📊 Overall Statistics")
+    st.subheader("📊 Overview")
 
     col1,col2,col3,col4 = st.columns(4)
 
     col1.metric("💊 Medicines", df["Medicine"].nunique())
-
-    col2.metric("📦 Total Stock", int(df["Quantity"].sum()))
-
-    col3.metric("🛒 Total Sold", int(df["Sold"].sum()))
-
+    col2.metric("📦 Stock", int(df["Quantity"].sum()))
+    col3.metric("🛒 Sold", int(df["Sold"].sum()))
     col4.metric("💰 Revenue", int((df["Sold"]*df["Price"]).sum()))
 
     st.divider()
 
-    st.subheader("🏆 Top 10 Selling Medicines")
+    st.subheader("🏆 Top Selling Medicines")
 
     top = df.groupby("Medicine")["Sold"].sum().sort_values(ascending=False).head(10)
 
-    fig, ax = plt.subplots(figsize=(10,5))
-
-    sns.barplot(
-        x=top.values,
-        y=top.index,
-        palette="viridis",
-        ax=ax
-    )
-
-    ax.set_xlabel("Units Sold")
-
+    fig, ax = plt.subplots()
+    sns.barplot(x=top.values, y=top.index, palette="viridis", ax=ax)
     st.pyplot(fig)
 
-# ------------------ SALES ANALYSIS ------------------
+# ---------------- SALES ANALYSIS ----------------
 elif menu == "Sales Analysis":
 
-    st.subheader("📈 Medicine Sales Analysis")
+    st.subheader("📈 Sales Analysis")
 
-    selected = st.multiselect(
-        "Select Medicines",
-        df["Medicine"].unique(),
-        default=df["Medicine"].unique()
-    )
+    sales = df.groupby("Medicine")["Sold"].sum().sort_values(ascending=False)
 
-    filtered = df[df["Medicine"].isin(selected)]
-
-    sales = filtered.groupby("Medicine")["Sold"].sum().sort_values(ascending=False)
-
-    fig, ax = plt.subplots(figsize=(12,6))
-
-    sns.barplot(
-        x=sales.index,
-        y=sales.values,
-        palette="Spectral",
-        ax=ax
-    )
-
+    fig, ax = plt.subplots(figsize=(10,5))
+    sns.barplot(x=sales.index, y=sales.values, palette="Spectral", ax=ax)
     plt.xticks(rotation=70)
-
     st.pyplot(fig)
 
-    st.subheader("🏆 Top 10 Sales Distribution")
+    st.subheader("🏆 Top 10 Distribution")
 
     top10 = sales.head(10)
 
     fig2, ax2 = plt.subplots()
-
-    ax2.pie(
-        top10.values,
-        labels=top10.index,
-        autopct="%1.1f%%",
-        startangle=90
-    )
-
-    ax2.axis("equal")
-
+    ax2.pie(top10.values, labels=top10.index, autopct="%1.1f%%")
     st.pyplot(fig2)
 
-# ------------------ EXPIRY ANALYSIS ------------------
+# ---------------- EXPIRY ANALYSIS ----------------
 elif menu == "Expiry Analysis":
 
-    st.subheader("⚠ Medicines Expiring Soon")
+    st.subheader("⚠ Expiring Soon")
 
-    expiry_alert = df[df["Days_Left"] < 30]
+    expiring = df[df["Days_Left"] < 30]
+    st.dataframe(expiring)
 
-    st.dataframe(expiry_alert)
-
-    st.subheader("💰 Potential Expiry Loss")
+    st.subheader("💰 Total Loss")
 
     loss = df["Potential_Loss"].sum()
+    st.metric("Loss", int(loss))
 
-    st.metric("Total Loss", int(loss))
+    st.subheader("💰 Top Loss Medicines")
+
+    top_loss = df.sort_values(by="Potential_Loss", ascending=False).head(5)
+    st.dataframe(top_loss[["Medicine","Potential_Loss","Days_Left"]])
 
     st.subheader("Expiry Risk Distribution")
 
     risk = df["Expiry_Risk"].value_counts()
 
-    fig3, ax3 = plt.subplots()
+    fig, ax = plt.subplots()
+    ax.pie(risk.values, labels=risk.index, autopct="%1.1f%%",
+           colors=["red","orange","green"])
+    st.pyplot(fig)
 
-    ax3.pie(
-        risk.values,
-        labels=risk.index,
-        autopct="%1.1f%%",
-        startangle=90,
-        colors=["red","orange","green"]
-    )
+# ---------------- PREDICTION ----------------
+elif menu == "Prediction":
 
-    st.pyplot(fig3)
+    st.subheader("🤖 Sales Prediction (ML Model)")
 
-# ------------------ SEARCH ------------------
-elif menu == "Search Medicine":
+    X = df[["Quantity","Price"]]
+    y = df["Sold"]
 
-    st.subheader("🔍 Search Medicine")
+    model = LinearRegression()
+    model.fit(X,y)
 
-    search = st.text_input("Enter Medicine Name")
+    qty = st.number_input("Enter Quantity", 10, 500)
+    price = st.number_input("Enter Price", 1, 100)
 
-    result = df[df["Medicine"].str.contains(search, case=False)]
+    if st.button("Predict"):
+        pred = model.predict([[qty,price]])
+        st.success(f"Predicted Sales: {int(pred[0])}")
 
-    st.dataframe(result)
+# ---------------- RECOMMENDATIONS ----------------
+elif menu == "Recommendations":
 
-# ------------------ DATABASE ------------------
+    st.subheader("💡 Smart Recommendations")
+
+    # Expiry Risk
+    high_risk = df[df["Expiry_Risk"]=="High Risk"]
+
+    if not high_risk.empty:
+        st.warning("⚠ Discount these medicines:")
+        st.dataframe(high_risk[["Medicine","Days_Left","Potential_Loss"]])
+    else:
+        st.success("No high-risk medicines")
+
+    # ⭐ BEST RESTOCK SYSTEM
+    st.subheader("📦 Restock Needed (Smart System)")
+
+    restock = df[df["Stock_Percentage"] < 20]
+
+    if restock.empty:
+        st.success("No restock needed")
+    else:
+        st.dataframe(restock[[
+            "Medicine",
+            "Quantity",
+            "Unsold",
+            "Stock_Percentage"
+        ]])
+
+# ---------------- DATABASE ----------------
 elif menu == "Database":
 
-    st.subheader("📋 Complete Dataset")
+    st.subheader("📋 Full Dataset")
 
     st.dataframe(df)
